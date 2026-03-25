@@ -284,6 +284,170 @@ class Game {
         this.renderer.render(this.scene, this.camera);
     }
 }
+/** * ADVANCED COMBAT & VFX MODULE 
+ * Includes: Raycast Weaponry, Particle Physics, and AI State Machine
+ */
+
+class ParticleSystem {
+    constructor(scene) {
+        this.scene = scene;
+        this.particles = [];
+    }
+
+    explode(position, color, count = 20) {
+        const geometry = new THREE.SphereGeometry(0.05, 4, 4);
+        const material = new THREE.MeshBasicMaterial({ color: color });
+
+        for (let i = 0; i < count; i++) {
+            const particle = new THREE.Mesh(geometry, material);
+            particle.position.copy(position);
+            
+            // Random velocity vector
+            particle.userData.velocity = new THREE.Vector3(
+                (Math.random() - 0.5) * 0.2,
+                (Math.random() - 0.5) * 0.2,
+                (Math.random() - 0.5) * 0.2
+            );
+            particle.userData.lifespan = 1.0; // seconds
+
+            this.scene.add(particle);
+            this.particles.push(particle);
+        }
+    }
+
+    update(delta) {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            p.position.add(p.userData.velocity);
+            p.userData.lifespan -= delta;
+            p.scale.multiplyScalar(0.95); // Shrink over time
+
+            if (p.userData.lifespan <= 0) {
+                this.scene.remove(p);
+                this.particles.splice(i, 1);
+            }
+        }
+    }
+}
+
+class Enemy {
+    constructor(scene, player, position) {
+        this.scene = scene;
+        this.player = player;
+        this.health = 3;
+        this.alive = true;
+
+        // Visuals: Floating Octahedron
+        const geo = new THREE.OctahedronGeometry(1, 0);
+        const mat = new THREE.MeshStandardMaterial({ 
+            color: 0xff0000, 
+            emissive: 0xff0000, 
+            emissiveIntensity: 2,
+            wireframe: true 
+        });
+        this.mesh = new THREE.Mesh(geo, mat);
+        this.mesh.position.copy(position);
+        this.scene.add(this.mesh);
+
+        this.floatY = position.y;
+    }
+
+    update(delta, time) {
+        if (!this.alive) return;
+
+        // Hover animation
+        this.mesh.position.y = this.floatY + Math.sin(time * 2) * 0.5;
+        this.mesh.rotation.y += delta * 3;
+
+        // Simple AI: Move toward player if within range
+        const dist = this.mesh.position.distanceTo(this.player.position);
+        if (dist < 30 && dist > 5) {
+            const dir = new THREE.Vector3().subVectors(this.player.position, this.mesh.position).normalize();
+            this.mesh.position.add(dir.multiplyScalar(delta * 4));
+        }
+    }
+
+    takeDamage(particles) {
+        this.health--;
+        particles.explode(this.mesh.position, 0xff0000, 15);
+        if (this.health <= 0) {
+            this.alive = false;
+            this.scene.remove(this.mesh);
+            return true; // Enemy destroyed
+        }
+        return false;
+    }
+}
+
+// UPDATE THE MAIN GAME CLASS WITH THESE METHODS
+// 1. Add this to initScene():
+this.raycaster = new THREE.Raycaster();
+this.vfx = new ParticleSystem(this.scene);
+this.enemies = [];
+this.spawnEnemies();
+
+// 2. Add these methods to the Game Class:
+spawnEnemies() {
+    for (let i = 0; i < 10; i++) {
+        const pos = new THREE.Vector3(
+            (Math.random() - 0.5) * 150,
+            5,
+            (Math.random() - 0.5) * 150
+        );
+        this.enemies.push(new Enemy(this.scene, this.camera, pos));
+    }
+}
+
+shoot() {
+    if (this.isPaused) return;
+
+    // Play Synth Shoot Sound
+    this.audio.playShootSound();
+
+    // Raycast from center of screen
+    this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+    const intersects = this.raycaster.intersectObjects(this.enemies.map(e => e.mesh));
+
+    if (intersects.length > 0) {
+        const hitObject = intersects[0].object;
+        const enemy = this.enemies.find(e => e.mesh === hitObject);
+        if (enemy && enemy.alive) {
+            const killed = enemy.takeDamage(this.vfx);
+            if (killed) {
+                this.score += 10;
+                document.getElementById('core-count').innerText = this.score;
+            }
+        }
+    }
+
+    // Screen Shake Effect
+    this.camera.position.x += (Math.random() - 0.5) * 0.1;
+    this.camera.position.z += (Math.random() - 0.5) * 0.1;
+}
+
+// 3. Add to AudioManager Class:
+playShootSound() {
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+    g.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+    osc.connect(g);
+    g.connect(this.masterGain);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.1);
+}
+
+// 4. Update the animate() loop:
+// Inside if(!this.isPaused) block:
+this.vfx.update(delta);
+this.enemies.forEach(enemy => enemy.update(delta, this.clock.elapsedTime));
+
+// 5. Add Event Listener to initEventListeners():
+window.addEventListener('mousedown', () => this.shoot());
 
 // Start the game instance
 new Game();
+
